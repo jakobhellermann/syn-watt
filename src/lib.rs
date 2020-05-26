@@ -291,7 +291,7 @@
 )]
 
 #[cfg(all(
-    not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "wasi"))),
+    not(all(not(feature = "watt"), target_arch = "wasm32", any(target_os = "unknown", target_os = "wasi"))),
     feature = "proc-macro"
 ))]
 extern crate proc_macro;
@@ -444,7 +444,7 @@ pub mod parse_quote;
 
 // Not public API except the `parse_macro_input!` macro.
 #[cfg(all(
-    not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "wasi"))),
+    not(all(not(feature = "watt"), target_arch = "wasm32", any(target_os = "unknown", target_os = "wasi"))),
     feature = "parsing",
     feature = "proc-macro"
 ))]
@@ -843,7 +843,7 @@ pub use crate::error::{Error, Result};
 /// }
 /// ```
 #[cfg(all(
-    not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "wasi"))),
+    not(all(not(feature = "watt"), target_arch = "wasm32", any(target_os = "unknown", target_os = "wasi"))),
     feature = "parsing",
     feature = "proc-macro"
 ))]
