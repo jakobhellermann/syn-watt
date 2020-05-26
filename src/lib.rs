@@ -290,11 +290,21 @@
     clippy::wildcard_imports
 )]
 
+#[cfg(all(feature = "watt", not(target_arch = "wasm32")))]
+compile_error!("watt should be used with wasm32");
+
 #[cfg(all(
-    not(all(not(feature = "watt"), target_arch = "wasm32", any(target_os = "unknown", target_os = "wasi"))),
-    feature = "proc-macro"
+    not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "wasi"))),
+    feature = "proc-macro",
+    not(feature = "watt"),
 ))]
 extern crate proc_macro;
+#[cfg(all(
+    // not(all(not(feature = "watt"), target_arch = "wasm32", any(target_os = "unknown", target_os = "wasi"))),
+    feature = "proc-macro",
+    feature = "watt",
+))]
+extern crate proc_macro2 as proc_macro;
 extern crate proc_macro2;
 extern crate unicode_xid;
 
