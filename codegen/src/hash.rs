@@ -1,14 +1,13 @@
-use crate::{cfg, file, lookup};
+use crate::{cfg, file, full, lookup};
 use anyhow::Result;
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{format_ident, quote};
 use syn_codegen::{Data, Definitions, Node, Type};
 
-const DEBUG_SRC: &str = "../src/gen/hash.rs";
+const HASH_SRC: &str = "src/gen/hash.rs";
 
 fn skip(field_type: &Type) -> bool {
     match field_type {
-        Type::Syn(node) => node == "Reserved",
         Type::Ext(ty) => ty == "Span",
         Type::Token(_) | Type::Group(_) => true,
         Type::Box(inner) => skip(inner),
@@ -22,16 +21,18 @@ fn expand_impl_body(defs: &Definitions, node: &Node) -> TokenStream {
     let ident = Ident::new(type_name, Span::call_site());
 
     match &node.data {
+        Data::Enum(variants) if variants.is_empty() => quote!(match *self {}),
         Data::Enum(variants) => {
+            let mixed_derive_full = full::is_mixed_derive_full_enum(defs, node);
             let arms = variants
                 .iter()
                 .enumerate()
                 .map(|(i, (variant_name, fields))| {
-                    let i = i as u8;
+                    let i = u8::try_from(i).unwrap();
                     let variant = Ident::new(variant_name, Span::call_site());
                     if fields.is_empty() {
                         quote! {
-                            #ident::#variant => {
+                            crate::#ident::#variant => {
                                 state.write_u8(#i);
                             }
                         }
@@ -60,26 +61,28 @@ fn expand_impl_body(defs: &Definitions, node: &Node) -> TokenStream {
                             pats.push(var);
                         }
                         let mut cfg = None;
-                        if node.ident == "Expr" {
-                            if let Type::Syn(ty) = &fields[0] {
-                                if !lookup::node(defs, ty).features.any.contains("derive") {
-                                    cfg = Some(quote!(#[cfg(feature = "full")]));
-                                }
+                        if mixed_derive_full && let Type::Syn(ty) = &fields[0] {
+                            let features = &lookup::node(defs, ty).features;
+                            if features.any.contains("full") && !features.any.contains("derive") {
+                                cfg = Some(quote!(#[cfg(feature = "full")]));
                             }
                         }
                         quote! {
                             #cfg
-                            #ident::#variant(#(#pats),*) => {
+                            crate::#ident::#variant(#(#pats),*) => {
                                 state.write_u8(#i);
                                 #(#hashes)*
                             }
                         }
                     }
                 });
-            let nonexhaustive = if node.exhaustive {
-                None
+            let nonexhaustive = if mixed_derive_full {
+                Some(quote! {
+                    #[cfg(not(feature = "full"))]
+                    _ => unreachable!(),
+                })
             } else {
-                Some(quote!(_ => unreachable!()))
+                None
             };
             quote! {
                 match self {
@@ -96,10 +99,10 @@ fn expand_impl_body(defs: &Definitions, node: &Node) -> TokenStream {
                 }
                 let ident = Ident::new(f, Span::call_site());
                 let mut val = quote!(self.#ident);
-                if let Type::Ext(ty) = ty {
-                    if ty == "TokenStream" {
-                        val = quote!(TokenStreamHelper(&#val));
-                    }
+                if let Type::Ext(ty) = ty
+                    && ty == "TokenStream"
+                {
+                    val = quote!(TokenStreamHelper(&#val));
                 }
                 Some(quote! {
                     #val.hash(state);
@@ -120,20 +123,20 @@ fn expand_impl(defs: &Definitions, node: &Node) -> TokenStream {
     }
 
     let ident = Ident::new(&node.ident, Span::call_site());
-    let cfg_features = cfg::features(&node.features);
+    let cfg_features = cfg::features(&node.features, "extra-traits");
 
     let body = expand_impl_body(defs, node);
-    let state = if body.is_empty() {
-        quote!(_state)
-    } else {
-        quote!(state)
+
+    let hasher = match &node.data {
+        Data::Struct(_) if body.is_empty() => quote!(_state),
+        Data::Enum(variants) if variants.is_empty() => quote!(_state),
+        _ => quote!(state),
     };
 
     quote! {
         #cfg_features
-        #[cfg_attr(doc_cfg, doc(cfg(feature = "extra-traits")))]
-        impl Hash for #ident {
-            fn hash<H>(&self, #state: &mut H)
+        impl Hash for crate::#ident {
+            fn hash<H>(&self, #hasher: &mut H)
             where
                 H: Hasher,
             {
@@ -150,12 +153,13 @@ pub fn generate(defs: &Definitions) -> Result<()> {
     }
 
     file::write(
-        DEBUG_SRC,
+        HASH_SRC,
         quote! {
-            use crate::*;
             #[cfg(any(feature = "derive", feature = "full"))]
             use crate::tt::TokenStreamHelper;
-            use std::hash::{Hash, Hasher};
+            #[cfg(feature = "extra-traits")]
+            use alloc::string::ToString;
+            use core::hash::{Hash, Hasher};
 
             #impls
         },

@@ -1,10 +1,11 @@
+use crate::workspace_path;
 use anyhow::Result;
 use proc_macro2::TokenStream;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-pub fn write<P: AsRef<Path>>(path: P, content: TokenStream) -> Result<()> {
+pub fn write(relative_to_workspace_root: impl AsRef<Path>, content: TokenStream) -> Result<()> {
     let mut formatted = Vec::new();
     writeln!(
         formatted,
@@ -13,24 +14,12 @@ pub fn write<P: AsRef<Path>>(path: P, content: TokenStream) -> Result<()> {
     writeln!(formatted, "// It is not intended for manual editing.")?;
     writeln!(formatted)?;
 
-    let mut config = rustfmt::Config::default();
-    config.set().format_macro_matchers(true);
-    config.set().normalize_doc_attributes(true);
+    let syntax_tree: syn::File = syn::parse2(content).unwrap();
+    let pretty = prettyplease::unparse(&syntax_tree);
+    write!(formatted, "{}", pretty)?;
 
-    let format_report = rustfmt::format(
-        rustfmt::Input::Text(content.to_string()),
-        &config,
-        rustfmt::OperationSetting {
-            recursive: false,
-            verbosity: rustfmt::emitter::Verbosity::Normal,
-        },
-    )?;
-
-    for (_filename, format_result) in format_report.format_result() {
-        write!(formatted, "{}", format_result.formatted_text())?;
-    }
-
-    if path.as_ref().is_file() && fs::read(&path)? == formatted {
+    let path = workspace_path::get(relative_to_workspace_root);
+    if path.is_file() && fs::read(&path)? == formatted {
         return Ok(());
     }
 
